@@ -227,6 +227,19 @@ const CLASS_WORDS: Record<OpClass, string> = {
   system: 'system',
 };
 
+/**
+ * `prev` itself when its contents equal `cur`, otherwise a fresh copy of
+ * `cur`. Snapshots share arrays this way, so they must never be mutated.
+ */
+function share<T extends number | boolean>(prev: readonly T[] | undefined, cur: ArrayLike<T>): T[] {
+  if (prev && prev.length === cur.length) {
+    let same = true;
+    for (let i = 0; i < cur.length && same; i++) same = prev[i] === cur[i];
+    if (same) return prev as T[];
+  }
+  return Array.from(cur);
+}
+
 /** Replace {#n} and {pN} references with plain text (for logs and tests). */
 export function plainText(text: string, uops: readonly Uop[]): string {
   return text
@@ -338,28 +351,46 @@ export class OoOCore {
     return !this.halted;
   }
 
+  /** The previous snapshot, whose arrays are reused when nothing changed. */
+  private lastSnap: Snapshot | null = null;
+
+  /**
+   * Snapshot of every structure. Arrays that did not change since the
+   * previous snapshot are shared with it rather than copied, so a long run
+   * on a large machine stays small: the register file and the PHT are
+   * recorded every cycle but change far less often.
+   */
   snapshot(): Snapshot {
     const bp = this.machine.branchPredictor;
-    return {
+    const prev = this.lastSnap;
+    const snap: Snapshot = {
       cycle: this.cycle,
       fetchPc: this.fetchPc,
       fetchState: this.fetchState,
-      fetchQ: this.fetchQ.slice(),
-      decodeQ: this.decodeQ.slice(),
-      rob: this.rob.slice(),
-      iq: this.iq.slice(),
-      executing: this.executing.slice(),
-      rat: this.rat.slice(),
-      rrat: this.rrat.slice(),
-      freeList: this.freeList.slice(),
-      prfValue: Array.from(this.prfValue),
-      prfReady: this.prfReady.slice(),
+      fetchQ: share(prev?.fetchQ, this.fetchQ),
+      decodeQ: share(prev?.decodeQ, this.decodeQ),
+      rob: share(prev?.rob, this.rob),
+      iq: share(prev?.iq, this.iq),
+      executing: share(prev?.executing, this.executing),
+      rat: share(prev?.rat, this.rat),
+      rrat: share(prev?.rrat, this.rrat),
+      freeList: share(prev?.freeList, this.freeList),
+      prfValue: share(prev?.prfValue, this.prfValue),
+      prfReady: share(prev?.prfReady, this.prfReady),
       ports: this.ports.map((x) => ({ ...x, classes: x.classes.slice() })),
-      predictor: { kind: bp.kind, pht: this.pht ? this.pht.slice() : null, ghr: this.ghr, historyBits: bp.historyBits, ras: this.ras.slice() },
+      predictor: {
+        kind: bp.kind,
+        pht: this.pht ? share(prev?.predictor.pht ?? undefined, this.pht) : null,
+        ghr: this.ghr,
+        historyBits: bp.historyBits,
+        ras: share(prev?.predictor.ras, this.ras),
+      },
       events: this.events.slice(),
       counters: { ...this.counters },
       halted: this.halted,
     };
+    this.lastSnap = snap;
+    return snap;
   }
 
   /** Committed architectural state. */

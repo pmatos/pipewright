@@ -494,12 +494,17 @@ export function PipelineDiagram() {
   const lo = Math.max(1, cycle - before);
   const hi = cycle + after;
   const rows = useMemo(() => {
-    const out = sim.uops.filter((x) => {
-      if (x.t.fetch > cycle) return false;
-      const end = x.t.commit ?? x.t.flush ?? Infinity;
-      return end >= lo;
-    });
-    return out.slice(-40);
+    // Everything still in flight is always shown, however old (a load stuck
+    // at the ROB head is the instruction to look at). Only finished history
+    // (retired or squashed) is trimmed to the most recent rows.
+    const live = (x: (typeof sim.uops)[number]) => {
+      const end = x.t.commit ?? x.t.flush;
+      return end === undefined || end > cycle;
+    };
+    const visible = sim.uops.filter((x) => x.t.fetch <= cycle && (x.t.commit ?? x.t.flush ?? Infinity) >= lo);
+    const history = visible.filter((x) => !live(x)).slice(-16);
+    const keep = new Set([...history, ...visible.filter(live)]);
+    return visible.filter((x) => keep.has(x));
   }, [sim, cycle, lo]);
   const cols = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
   return (

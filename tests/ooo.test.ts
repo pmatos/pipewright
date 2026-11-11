@@ -139,3 +139,27 @@ describe('out-of-order core: behaviour', () => {
     }
   });
 });
+
+describe('out-of-order core: snapshots', () => {
+  it('share unchanged arrays with the previous snapshot instead of copying them', () => {
+    const sim = simulate(load('dependent_chain.s'), SERVER);
+    const s = sim.snapshots;
+    let sharedPht = 0;
+    for (let c = 1; c < s.length; c++) {
+      if (s[c]!.predictor.pht === s[c - 1]!.predictor.pht) sharedPht++;
+      // Sharing never changes what a snapshot says.
+      expect(s[c]!.prfValue.length).toBe(SERVER.physRegs);
+    }
+    expect(sharedPht).toBeGreaterThan(s.length / 2);
+  });
+
+  it('a shared snapshot still shows the state of its own cycle', () => {
+    const p = load('rename_demo.s');
+    const sim = simulate(p, TEACHING);
+    const last = sim.snapshots[sim.snapshots.length - 1]!;
+    const a0 = last.prfValue[last.rrat[10]!];
+    expect(a0).toBe(runProgram(p).state.regs[10]);
+    // Cycle 0 is untouched by later cycles.
+    expect(sim.snapshots[0]!.rat).toEqual(Array.from({ length: 32 }, (_, i) => i));
+  });
+});

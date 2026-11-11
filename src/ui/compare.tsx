@@ -43,8 +43,13 @@ const PARAMS: { label: string; get: (m: MachineDesc) => string | number; why: st
 export function Compare({ program, a, b, setA, setB }: Props) {
   const ma = useMemo(() => buildMachine(a), [a]);
   const mb = useMemo(() => buildMachine(b), [b]);
-  const full = useMemo(() => [ma, mb].map((m) => simulate(program, m, { snapshots: false, maxCycles: 300_000 })), [program, ma, mb]);
   const stepped = useMemo(() => [ma, mb].map((m) => simulate(program, m, { maxCycles: MAX_UI_CYCLES })), [program, ma, mb]);
+  // The stepped run already has the totals when it finished within the
+  // snapshot limit; only longer programs need a second, snapshot-free run.
+  const full = useMemo(
+    () => stepped.map((r) => (r.halt === 'limit' ? simulate(program, r.machine, { snapshots: false, maxCycles: 300_000 }) : r)),
+    [program, stepped],
+  );
   const [cycle, setCycle] = useState(0);
   const last = Math.max(stepped[0]!.snapshots.length, stepped[1]!.snapshots.length) - 1;
   const [ra, rb] = full as [SimResult, SimResult];
