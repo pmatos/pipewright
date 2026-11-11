@@ -8,3 +8,5 @@ export * from './isa';
 export * from './memory';
 export * from './assembler';
 export * from './interpreter';
+export * from './machine';
+export * from './ooo';
