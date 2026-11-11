@@ -23,7 +23,9 @@ export function Narration({ showWhy }: { showWhy: boolean }) {
     const m = new Map<Stage, CoreEvent[]>();
     for (const e of events) {
       if (e.why && !showWhy) continue;
-      m.set(e.stage, [...(m.get(e.stage) ?? []), e]);
+      const list = m.get(e.stage);
+      if (list) list.push(e);
+      else m.set(e.stage, [e]);
     }
     return m;
   }, [events, showWhy]);

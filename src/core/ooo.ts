@@ -70,10 +70,6 @@ export interface Prediction {
   taken?: boolean;
   /** Pattern history table index used (bimodal, gshare). */
   phtIndex?: number;
-  /** Counter value read from the PHT. */
-  counter?: number;
-  /** Global history used for the prediction (gshare). */
-  ghr?: number;
   /** Return address stack used for a return. */
   fromRas?: boolean;
   reason: string;
@@ -255,11 +251,13 @@ export function plainText(text: string, uops: readonly Uop[]): string {
 
 interface Internal {
   ratCheckpoint?: number[];
-  ghrAfter?: number;
   rasAfter?: number[];
   ghrBefore?: number;
   doneCycle?: number;
 }
+
+/** Branches and jumps: the instructions that can redirect fetch. */
+const isControl = (x: Uop) => x.cls === 'branch' || x.cls === 'jump';
 
 export class OoOCore {
   readonly machine: MachineDesc;
@@ -294,6 +292,9 @@ export class OoOCore {
   private ports: PortView[];
   private pht: number[] | null;
   private ghr = 0;
+  /** Reused by execute() for register-only instructions, which never touch memory. */
+  private readonly scratchRegs = new Int32Array(32);
+  private readonly scratchMem = new Memory();
   private ras: number[] = [];
 
   private retired = 0;
@@ -397,7 +398,8 @@ export class OoOCore {
   archState(): ArchState {
     const regs = new Int32Array(32);
     for (let r = 1; r < 32; r++) regs[r] = this.prfValue[this.rrat[r]!]!;
-    const last = [...this.uops].reverse().find((x) => x.t.commit !== undefined);
+    let last: Uop | undefined;
+    for (let i = this.uops.length - 1; i >= 0 && !last; i--) if (this.uops[i]!.t.commit !== undefined) last = this.uops[i];
     return { pc: last?.actualNext ?? this.program.entry, regs, mem: this.mem };
   }
 
@@ -462,7 +464,7 @@ export class OoOCore {
         else this.mem.write32(x.memAddr!, x.memValue!);
         parts.push(`The store finally writes ${x.memValue} to memory at ${hex(x.memAddr!)}. Stores only touch memory at commit, so a mispredict can never leave a wrong value behind.`);
       }
-      if (x.cls === 'branch' || x.cls === 'jump') {
+      if (isControl(x)) {
         this.counters.BR_RETIRED++;
         if (x.mispredicted) this.counters.BR_MIS_PRED_RETIRED++;
       }
@@ -493,7 +495,6 @@ export class OoOCore {
     for (const id of finishing) {
       const x = this.uops[id]!;
       if (x.t.flush !== undefined) continue; // squashed by an older mispredict this cycle
-      this.executing = this.executing.filter((e) => e !== id);
       x.t.complete = this.cycle;
       if (x.pdst !== null) {
         this.prfValue[x.pdst] = x.result!;
@@ -506,26 +507,31 @@ export class OoOCore {
         this.emit('writeback', woken.length ? 'wakeup' : 'writeback', `${u(id)} finished: ${p(x.pdst)} = ${x.result}.${wake}`, [id, ...woken], [x.pdst]);
       } else if (x.cls === 'store') {
         this.emit('writeback', 'writeback', `${u(id)} has its address (${hex(x.memAddr!)}) and data (${x.memValue}). It waits in the ROB and writes memory when it retires.`, [id]);
-      } else if (x.cls !== 'branch' && x.cls !== 'jump') {
+      } else if (!isControl(x)) {
         this.emit('writeback', 'writeback', `${u(id)} finished.`, [id]);
       }
-      if (x.cls === 'branch' || x.cls === 'jump') this.resolve(x);
+      if (isControl(x)) this.resolve(x);
     }
+    this.executing = this.executing.filter((id) => !finishing.includes(id));
+  }
+
+  /** The global history after one more branch outcome has been shifted in. */
+  private shiftHistory(history: number, taken: boolean): number {
+    const mask = (1 << this.machine.branchPredictor.historyBits) - 1;
+    return ((history << 1) | (taken ? 1 : 0)) & mask;
   }
 
   private resolve(x: Uop) {
     const m = this.machine;
     const int = this.internal.get(x.id)!;
-    const hmask = (1 << m.branchPredictor.historyBits) - 1;
     const outcome = x.cls === 'branch' ? (x.taken ? 'taken' : 'not taken') : `jumps to ${hex(x.actualNext!)}`;
-    if (x.cls === 'branch') int.ghrAfter = ((int.ghrBefore! << 1) | (x.taken ? 1 : 0)) & hmask;
 
     if (x.pred.kind === 'stall') {
       if (this.fetchBlockedBy === x.id) {
         this.fetchBlockedBy = null;
         this.fetchPc = x.actualNext!;
         this.fetchResume = this.cycle + 1;
-        if (x.cls === 'branch') this.ghr = int.ghrAfter!;
+        if (x.cls === 'branch') this.ghr = this.shiftHistory(int.ghrBefore!, x.taken!);
       }
       this.emit('writeback', 'resolve', `${u(x.id)} resolved: ${outcome}. Fetch was waiting for this and restarts at ${hex(x.actualNext!)} next cycle.`, [x.id]);
       return;
@@ -592,8 +598,7 @@ export class OoOCore {
     // A conditional branch restores the history including its own real outcome.
     // A jump has no outcome bit, so the history goes back to what it was when
     // the jump was fetched, which drops everything the wrong path shifted in.
-    const ghrRestored = int.ghrAfter ?? int.ghrBefore;
-    if (ghrRestored !== undefined) this.ghr = ghrRestored;
+    this.ghr = br.cls === 'branch' ? this.shiftHistory(int.ghrBefore!, br.taken!) : int.ghrBefore!;
     this.ras = int.rasAfter!.slice();
     this.fetchPc = br.actualNext!;
     this.fetchStopped = false;
@@ -714,11 +719,12 @@ export class OoOCore {
       const size = memSize(x.instr.op);
       x.memValue = size === 1 ? b & 0xff : size === 2 ? b & 0xffff : b;
     } else {
-      const regs = new Int32Array(32);
+      const regs = this.scratchRegs;
+      regs.fill(0);
       if (x.srcArch[0] !== undefined) regs[x.instr.rs1] = a;
       if (x.srcArch[1] !== undefined) regs[x.instr.rs2] = b;
       regs[0] = 0;
-      const scratch: ArchState = { pc: x.pc, regs, mem: new Memory() };
+      const scratch: ArchState = { pc: x.pc, regs, mem: this.scratchMem };
       const rec = execute(x.instr, scratch, 0);
       if (rec.rdValue !== undefined && x.pdst !== null) x.result = rec.rdValue;
       x.actualNext = rec.nextPc;
@@ -778,13 +784,13 @@ export class OoOCore {
         this.producer.set(pd, id);
         dstText = ` Its result for ${regName(x.dstArch)} gets the free register ${p(pd)}, so later readers of ${regName(x.dstArch)} wait for this instruction and not for anyone else. The old copy ${p(x.oldPdst)} stays alive until this instruction retires.`;
       }
-      if (x.cls === 'branch' || x.cls === 'jump') {
+      if (isControl(x)) {
         const int = this.internal.get(id)!;
         int.ratCheckpoint = this.rat.slice();
       }
       this.rob.push(id);
       this.iq.push(id);
-      const cp = x.cls === 'branch' || x.cls === 'jump' ? ' The RAT is checkpointed here in case this control transfer was mispredicted.' : '';
+      const cp = isControl(x) ? ' The RAT is checkpointed here in case this control transfer was mispredicted.' : '';
       this.emit(
         'rename',
         'rename',
@@ -834,7 +840,6 @@ export class OoOCore {
     const m = this.machine;
     const bp = m.branchPredictor;
     const cls = opClass(instr.op);
-    const hmask = (1 << bp.historyBits) - 1;
     int.ghrBefore = this.ghr;
     if (cls === 'system') return { kind: 'halt', next: pc + 4, reason: `${instr.op} halts the machine, so fetch stops here.` };
     if (instr.op === 'jal') {
@@ -857,7 +862,7 @@ export class OoOCore {
 
     const target = (pc + instr.imm) | 0;
     const make = (taken: boolean, reason: string, extra: Partial<Prediction> = {}): Prediction => {
-      this.ghr = ((this.ghr << 1) | (taken ? 1 : 0)) & hmask;
+      this.ghr = this.shiftHistory(this.ghr, taken);
       return { kind: 'predicted', taken, next: taken ? target : (pc + 4) | 0, reason, ...extra };
     };
     switch (bp.kind) {
@@ -879,7 +884,7 @@ export class OoOCore {
           bp.kind === 'bimodal'
             ? `PHT[${idx}] (indexed by the branch address)`
             : `PHT[${idx}] (branch address XOR global history ${this.ghr.toString(2).padStart(bp.historyBits, '0')})`;
-        return make(taken, `${how} holds ${ctr}, "${COUNTER_NAMES[ctr]}", so predicted ${taken ? 'taken' : 'not taken'}.`, { phtIndex: idx, counter: ctr, ghr: this.ghr });
+        return make(taken, `${how} holds ${ctr}, "${COUNTER_NAMES[ctr]}", so predicted ${taken ? 'taken' : 'not taken'}.`, { phtIndex: idx });
       }
     }
   }
@@ -938,7 +943,7 @@ export class OoOCore {
         port: null,
         t: { fetch: this.cycle },
       };
-      if (x.cls === 'branch' || x.cls === 'jump') int.rasAfter = this.ras.slice();
+      if (isControl(x)) int.rasAfter = this.ras.slice();
       this.uops.push(x);
       this.internal.set(id, int);
       this.fetchQ.push(id);
