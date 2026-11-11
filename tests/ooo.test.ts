@@ -10,6 +10,7 @@ import {
   runProgram,
   simulate,
   TEACHING,
+  validateMachine,
   type MachineDesc,
   type PredictorKind,
   type Program,
@@ -60,6 +61,31 @@ describe('out-of-order core: golden tests against the interpreter', () => {
 
   it('a program that falls off the end halts with "end"', () => {
     golden(assemble('li a0, 1\naddi a0, a0, 2'), TEACHING);
+  });
+});
+
+describe('machine description validation', () => {
+  it('accepts every preset', () => {
+    for (const m of Object.values(PRESETS)) expect(validateMachine(m)).toEqual([]);
+  });
+
+  it('reports missing sections as readable errors instead of throwing', () => {
+    const broken = { name: 'broken', policy: 'ooo' } as unknown as MachineDesc;
+    const errs = validateMachine(broken);
+    expect(errs).toContain("'width' must be an object with fetch, rename and commit");
+    expect(errs).toContain("'latency' must give a latency for every class");
+    expect(errs).toContain("'branchPredictor' must be an object");
+  });
+
+  it('rejects duplicate port names and missing pipelined flags', () => {
+    const dup: MachineDesc = {
+      ...TEACHING,
+      ports: [...TEACHING.ports, { name: 'ALU0', classes: ['alu'] }],
+      pipelined: { ...TEACHING.pipelined, div: undefined as unknown as boolean },
+    };
+    const errs = validateMachine(dup);
+    expect(errs).toContain("port name 'ALU0' is used twice");
+    expect(errs).toContain('pipelined.div must be true or false');
   });
 });
 
@@ -124,6 +150,35 @@ describe('out-of-order core: behaviour', () => {
     const rets = sim.uops.filter((x) => x.instr.op === 'jalr' && x.t.commit !== undefined);
     expect(rets.length).toBeGreaterThan(0);
     expect(rets.some((x) => x.pred.fromRas && !x.mispredicted)).toBe(true);
+  });
+
+  it('a mispredicted return restores the global history shifted in on the wrong path', () => {
+    const src = [
+      'li t0, 3',
+      'again:',
+      'addi t0, t0, -1',
+      'bnez t0, again',
+      'jal ra, f',
+      'wrong:',
+      'beqz zero, wrong',
+      'beqz zero, wrong',
+      'ecall',
+      'f:',
+      'la ra, done',
+      'ret',
+      'done:',
+      'ecall',
+    ].join('\n');
+    const machine: MachineDesc = {
+      ...TEACHING,
+      branchPredictor: { kind: 'gshare', tableBits: 4, historyBits: 8, rasDepth: 4 },
+    };
+    const sim = simulate(assemble(src), machine);
+    const ret = sim.uops.find((x) => x.instr.op === 'jalr' && x.t.commit !== undefined)!;
+    expect(ret.mispredicted).toBe(true);
+    expect(sim.uops.some((x) => x.cls === 'branch' && x.t.flush !== undefined && x.text.startsWith('beq'))).toBe(true);
+    // The loop branch was taken, taken, not taken: history 0b110.
+    expect(sim.snapshots[sim.snapshots.length - 1]!.predictor.ghr).toBe(0b110);
   });
 
   it('snapshots are self-consistent every cycle', () => {

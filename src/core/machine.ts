@@ -166,30 +166,60 @@ export const SERVER: MachineDesc = {
 
 export const PRESETS: Record<string, MachineDesc> = { teaching: TEACHING, narrow: NARROW, mobile: MOBILE, server: SERVER };
 
-/** Check a description and return a list of problems (empty when valid). */
+/**
+ * Check a description and return a list of problems (empty when valid).
+ * The input may come from hand-written JSON, so missing sections are reported
+ * as errors instead of throwing.
+ */
 export function validateMachine(m: MachineDesc): string[] {
   const errs: string[] = [];
-  const pos = (v: number, what: string, min = 1) => {
-    if (!Number.isInteger(v) || v < min) errs.push(`${what} must be an integer >= ${min}`);
+  const pos = (v: unknown, what: string, min = 1) => {
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < min) errs.push(`${what} must be an integer >= ${min}`);
   };
-  pos(m.width.fetch, 'width.fetch');
-  pos(m.width.rename, 'width.rename');
-  pos(m.width.commit, 'width.commit');
+  const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+
+  if (isObject(m.width)) {
+    pos(m.width.fetch, 'width.fetch');
+    pos(m.width.rename, 'width.rename');
+    pos(m.width.commit, 'width.commit');
+  } else errs.push("'width' must be an object with fetch, rename and commit");
   pos(m.rob, 'rob');
   pos(m.iq, 'iq');
   pos(m.fetchBuffer, 'fetchBuffer');
   pos(m.physRegs, 'physRegs', 33);
   pos(m.redirectPenalty, 'redirectPenalty', 0);
+
+  const ports = Array.isArray(m.ports) ? m.ports : null;
+  if (!ports || ports.length === 0) errs.push("'ports' must be a non-empty list");
+  else {
+    const seen = new Set<string>();
+    for (const p of ports) {
+      if (!isObject(p) || typeof p.name !== 'string' || p.name === '' || !Array.isArray(p.classes)) {
+        errs.push("every port needs a 'name' and a list of 'classes'");
+        continue;
+      }
+      if (seen.has(p.name)) errs.push(`port name '${p.name}' is used twice`);
+      seen.add(p.name);
+    }
+  }
+
+  if (!isObject(m.latency)) errs.push("'latency' must give a latency for every class");
+  if (!isObject(m.pipelined)) errs.push("'pipelined' must say whether each class is pipelined");
   for (const c of CLASSES) {
-    pos(m.latency[c], `latency.${c}`);
-    if (!m.ports.some((p) => p.classes.includes(c))) errs.push(`no port executes class '${c}'`);
+    if (isObject(m.latency)) pos(m.latency[c], `latency.${c}`);
+    if (isObject(m.pipelined) && typeof m.pipelined[c] !== 'boolean') errs.push(`pipelined.${c} must be true or false`);
+    if (ports && !ports.some((p) => isObject(p) && Array.isArray(p.classes) && p.classes.includes(c))) errs.push(`no port executes class '${c}'`);
   }
+
   const bp = m.branchPredictor;
-  if (bp.kind === 'bimodal' || bp.kind === 'gshare') {
-    if (!Number.isInteger(bp.tableBits) || bp.tableBits < 1 || bp.tableBits > 16) errs.push('branchPredictor.tableBits must be 1..16');
+  if (!isObject(bp)) errs.push("'branchPredictor' must be an object");
+  else {
+    if (bp.kind === 'bimodal' || bp.kind === 'gshare') {
+      if (!Number.isInteger(bp.tableBits) || bp.tableBits < 1 || bp.tableBits > 16) errs.push('branchPredictor.tableBits must be 1..16');
+    }
+    if (bp.kind === 'gshare' && (!Number.isInteger(bp.historyBits) || bp.historyBits < 1 || bp.historyBits > 16))
+      errs.push('branchPredictor.historyBits must be 1..16');
+    pos(bp.rasDepth, 'branchPredictor.rasDepth', 0);
   }
-  if (bp.kind === 'gshare' && (!Number.isInteger(bp.historyBits) || bp.historyBits < 1 || bp.historyBits > 16))
-    errs.push('branchPredictor.historyBits must be 1..16');
-  pos(bp.rasDepth, 'branchPredictor.rasDepth', 0);
   return errs;
 }

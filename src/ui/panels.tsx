@@ -457,7 +457,7 @@ export function CountersPanel() {
     ['INST_RETIRED', c.INST_RETIRED, 'instructions retired (architecturally executed)'],
     ['IPC', ipc.toFixed(2), `retired per cycle; this machine can retire at most ${m.width.commit}`],
     ['INST_SPEC', c.INST_SPEC, 'instructions renamed, including ones later squashed'],
-    ['BR_RETIRED', c.BR_RETIRED, 'conditional branches retired'],
+    ['BR_RETIRED', c.BR_RETIRED, 'branches and jumps retired'],
     ['BR_MIS_PRED_RETIRED', c.BR_MIS_PRED_RETIRED, 'retired branches and returns that had been mispredicted'],
     ['UOPS_FLUSHED', c.UOPS_FLUSHED, 'wrong-path instructions thrown away'],
     ['STALL_SLOT_FRONTEND', c.STALL_SLOT_FRONTEND, 'rename slots empty because the front end had nothing'],

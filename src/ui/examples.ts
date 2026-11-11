@@ -26,13 +26,13 @@ export const EXAMPLES: Example[] = [
     id: 'chain',
     title: 'Dependent chain (latency-bound)',
     source: dependentChain,
-    hint: 'Each MUL waits in the issue queue for the previous one: look for "waits … not ready". Switch the machine to big: IPC barely moves, because width cannot beat a dependence chain.',
+    hint: 'Each MUL waits in the issue queue for the previous one: look for "waits … not ready". Switch the machine to server: IPC barely moves, because width cannot beat a dependence chain.',
   },
   {
     id: 'independent',
     title: 'Independent adds (width-bound)',
     source: independentAdds,
-    hint: 'Four accumulators never wait for each other, so several instructions issue every cycle. Compare narrow, teaching and big: IPC follows the width.',
+    hint: 'Four accumulators never wait for each other, so several instructions issue every cycle. Compare narrow, teaching and server: IPC follows the width.',
   },
   {
     id: 'branchy',
