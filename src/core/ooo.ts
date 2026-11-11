@@ -868,7 +868,7 @@ export class OoOCore {
     }
     if (this.cycle < this.fetchResume) {
       this.fetchState = 'redirect bubble';
-      this.emit('fetch', 'fetch-stall', `Fetch bubble: the front end is still being redirected after a mispredict (resumes at cycle ${this.fetchResume}).`, [], [], true);
+      this.emit('fetch', 'fetch-stall', `No fetch this cycle: the front end is being redirected to the correct path after a mispredict, and fetch restarts in cycle ${this.fetchResume}.`, [], [], true);
       return;
     }
     const got: number[] = [];

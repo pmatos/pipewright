@@ -38,6 +38,8 @@ export interface PortDesc {
 
 export interface MachineDesc {
   name: string;
+  /** One-paragraph description of the design point (shown in the UI). */
+  description?: string;
   policy: Policy;
   width: {
     /** Instructions fetched per cycle. */
@@ -74,6 +76,7 @@ const CLASSES: OpClass[] = ['alu', 'mul', 'div', 'load', 'store', 'branch', 'jum
 /** A small out-of-order core whose structures fit on screen. */
 export const TEACHING: MachineDesc = {
   name: 'teaching',
+  description: 'Two-wide with a 16-entry ROB and 48 physical registers: big enough to show out-of-order execution, small enough that every structure fits on screen.',
   policy: 'ooo',
   width: { fetch: 2, rename: 2, commit: 2 },
   rob: 16,
@@ -91,34 +94,11 @@ export const TEACHING: MachineDesc = {
   redirectPenalty: 0,
 };
 
-/** A wide core in the spirit of a modern big core, scaled down. */
-export const BIG: MachineDesc = {
-  name: 'big',
-  policy: 'ooo',
-  width: { fetch: 6, rename: 6, commit: 6 },
-  rob: 128,
-  iq: 48,
-  physRegs: 160,
-  fetchBuffer: 12,
-  ports: [
-    { name: 'ALU0', classes: ['alu', 'branch', 'jump', 'system'] },
-    { name: 'ALU1', classes: ['alu', 'branch', 'jump'] },
-    { name: 'ALU2', classes: ['alu', 'mul'] },
-    { name: 'ALU3', classes: ['alu', 'mul', 'div'] },
-    { name: 'LD0', classes: ['load'] },
-    { name: 'LD1', classes: ['load'] },
-    { name: 'ST0', classes: ['store'] },
-  ],
-  latency: { alu: 1, mul: 3, div: 12, load: 4, store: 1, branch: 1, jump: 1, system: 1 },
-  pipelined: { alu: true, mul: true, div: false, load: true, store: true, branch: true, jump: true, system: true },
-  branchPredictor: { kind: 'gshare', tableBits: 10, historyBits: 8, rasDepth: 16 },
-  redirectPenalty: 2,
-};
-
 /** One-wide, tiny window: shows how little a narrow core can overlap. */
 export const NARROW: MachineDesc = {
   ...TEACHING,
   name: 'narrow',
+  description: 'One instruction per cycle and an 8-entry window: the smallest machine that still renames and executes out of order.',
   width: { fetch: 1, rename: 1, commit: 1 },
   rob: 8,
   iq: 4,
@@ -130,7 +110,61 @@ export const NARROW: MachineDesc = {
   ],
 };
 
-export const PRESETS: Record<string, MachineDesc> = { teaching: TEACHING, narrow: NARROW, big: BIG };
+/**
+ * A phone-class core: out of order but modest, loosely in the spirit of a
+ * mid-size mobile core. Every structure is sized for energy per instruction.
+ */
+export const MOBILE: MachineDesc = {
+  name: 'mobile',
+  description:
+    'A phone-class core. Three-wide, a 40-entry ROB, a small bimodal predictor, two ALUs and one load/store port. Each of those structures is looked up or searched every cycle, so on a battery budget they are kept just big enough for typical code.',
+  policy: 'ooo',
+  width: { fetch: 3, rename: 3, commit: 3 },
+  rob: 40,
+  iq: 16,
+  physRegs: 80,
+  fetchBuffer: 6,
+  ports: [
+    { name: 'ALU0', classes: ['alu', 'branch', 'jump', 'system'] },
+    { name: 'ALU1', classes: ['alu', 'mul', 'div'] },
+    { name: 'LSU', classes: ['load', 'store'] },
+  ],
+  latency: { alu: 1, mul: 3, div: 12, load: 3, store: 1, branch: 1, jump: 1, system: 1 },
+  pipelined: { alu: true, mul: true, div: false, load: true, store: true, branch: true, jump: true, system: true },
+  branchPredictor: { kind: 'bimodal', tableBits: 6, historyBits: 6, rasDepth: 8 },
+  redirectPenalty: 1,
+};
+
+/**
+ * A server-class core: wide and deep, loosely in the spirit of a modern
+ * datacentre core, scaled down to stay readable.
+ */
+export const SERVER: MachineDesc = {
+  name: 'server',
+  description:
+    'A server-class core. Eight-wide, a 192-entry ROB, a large gshare predictor, four ALUs, two load ports and a store port. It spends area and power on looking far ahead for independent work, which pays off on code with parallelism and does nothing for a dependence chain. The deeper front end makes each mispredict cost more.',
+  policy: 'ooo',
+  width: { fetch: 8, rename: 8, commit: 8 },
+  rob: 192,
+  iq: 64,
+  physRegs: 256,
+  fetchBuffer: 16,
+  ports: [
+    { name: 'ALU0', classes: ['alu', 'branch', 'jump', 'system'] },
+    { name: 'ALU1', classes: ['alu', 'branch', 'jump'] },
+    { name: 'ALU2', classes: ['alu', 'mul'] },
+    { name: 'ALU3', classes: ['alu', 'mul', 'div'] },
+    { name: 'LD0', classes: ['load'] },
+    { name: 'LD1', classes: ['load'] },
+    { name: 'ST0', classes: ['store'] },
+  ],
+  latency: { alu: 1, mul: 3, div: 12, load: 4, store: 1, branch: 1, jump: 1, system: 1 },
+  pipelined: { alu: true, mul: true, div: false, load: true, store: true, branch: true, jump: true, system: true },
+  branchPredictor: { kind: 'gshare', tableBits: 12, historyBits: 10, rasDepth: 32 },
+  redirectPenalty: 3,
+};
+
+export const PRESETS: Record<string, MachineDesc> = { teaching: TEACHING, narrow: NARROW, mobile: MOBILE, server: SERVER };
 
 /** Check a description and return a list of problems (empty when valid). */
 export function validateMachine(m: MachineDesc): string[] {

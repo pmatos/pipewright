@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   assemble,
-  BIG,
+  SERVER,
   NARROW,
   plainText,
   PRESETS,
@@ -79,9 +79,9 @@ describe('out-of-order core: behaviour', () => {
 
   it('a dependent chain does not speed up with width; independent adds do', () => {
     const chainNarrow = simulate(load('dependent_chain.s'), NARROW, { snapshots: false });
-    const chainBig = simulate(load('dependent_chain.s'), BIG, { snapshots: false });
+    const chainBig = simulate(load('dependent_chain.s'), SERVER, { snapshots: false });
     const indNarrow = simulate(load('independent_adds.s'), NARROW, { snapshots: false });
-    const indBig = simulate(load('independent_adds.s'), BIG, { snapshots: false });
+    const indBig = simulate(load('independent_adds.s'), SERVER, { snapshots: false });
     const ipc = (r: { retired: number; cycles: number }) => r.retired / r.cycles;
     expect(ipc(indBig) / ipc(indNarrow)).toBeGreaterThan(1.8);
     expect(ipc(chainBig) / ipc(chainNarrow)).toBeLessThan(ipc(indBig) / ipc(indNarrow));
