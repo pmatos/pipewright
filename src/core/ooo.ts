@@ -431,12 +431,11 @@ export class OoOCore {
         else this.mem.write32(x.memAddr!, x.memValue!);
         parts.push(`The store finally writes ${x.memValue} to memory at ${hex(x.memAddr!)}. Stores only touch memory at commit, so a mispredict can never leave a wrong value behind.`);
       }
-      if (x.cls === 'branch') {
+      if (x.cls === 'branch' || x.cls === 'jump') {
         this.counters.BR_RETIRED++;
         if (x.mispredicted) this.counters.BR_MIS_PRED_RETIRED++;
-        this.train(x);
       }
-      if (x.cls === 'jump' && x.mispredicted) this.counters.BR_MIS_PRED_RETIRED++;
+      if (x.cls === 'branch') this.train(x);
       this.emit('commit', 'commit', `Retired ${u(id)}.${parts.length ? ' ' + parts.join(' ') : ''}`, [id], x.pdst !== null ? [x.pdst, x.oldPdst!] : []);
       if (x.instr.op === 'ecall' || x.instr.op === 'ebreak') {
         this.halted = x.instr.op;
@@ -559,7 +558,11 @@ export class OoOCore {
     }
     this.counters.UOPS_FLUSHED += victims.size;
     this.rat = int.ratCheckpoint!.slice();
-    if (int.ghrAfter !== undefined) this.ghr = int.ghrAfter;
+    // A conditional branch restores the history including its own real outcome.
+    // A jump has no outcome bit, so the history goes back to what it was when
+    // the jump was fetched, which drops everything the wrong path shifted in.
+    const ghrRestored = int.ghrAfter ?? int.ghrBefore;
+    if (ghrRestored !== undefined) this.ghr = ghrRestored;
     this.ras = int.rasAfter!.slice();
     this.fetchPc = br.actualNext!;
     this.fetchStopped = false;
@@ -801,6 +804,7 @@ export class OoOCore {
     const bp = m.branchPredictor;
     const cls = opClass(instr.op);
     const hmask = (1 << bp.historyBits) - 1;
+    int.ghrBefore = this.ghr;
     if (cls === 'system') return { kind: 'halt', next: pc + 4, reason: `${instr.op} halts the machine, so fetch stops here.` };
     if (instr.op === 'jal') {
       if (instr.rd === 1 && bp.rasDepth > 0) this.pushRas((pc + 4) | 0);
@@ -821,7 +825,6 @@ export class OoOCore {
     if (cls !== 'branch') return { kind: 'seq', next: (pc + 4) | 0, reason: '' };
 
     const target = (pc + instr.imm) | 0;
-    int.ghrBefore = this.ghr;
     const make = (taken: boolean, reason: string, extra: Partial<Prediction> = {}): Prediction => {
       this.ghr = ((this.ghr << 1) | (taken ? 1 : 0)) & hmask;
       return { kind: 'predicted', taken, next: taken ? target : (pc + 4) | 0, reason, ...extra };

@@ -1,5 +1,5 @@
 # Latency-bound: every MUL needs the previous result, so the core cannot
-# overlap them however wide it is. Compare the narrow and big presets.
+# overlap them however wide it is. Compare the narrow and server presets.
 # Result: a0 = 3^32 mod 2^32 = -501334399 (the multiplies wrap)
     .text
 main:

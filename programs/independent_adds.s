@@ -1,5 +1,5 @@
 # Width-bound: four independent accumulators, so a wide core can run
-# several adds every cycle. Compare the narrow and big presets.
+# several adds every cycle. Compare the narrow and server presets.
 # Result: a0 = 40 * (1 + 2 + 3 + 4) = 400
     .text
 main:

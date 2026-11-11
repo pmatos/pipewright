@@ -14,15 +14,21 @@ import { Compare } from './compare';
 import { CountersPanel, FrontEnd, Inspector, IssuePanel, Narration, PipelineDiagram, PredictorPanel, ProgramListing, RegFilePanel, RenamePanel, RobPanel } from './panels';
 import { related, Rich, ViewContext, type Focus, type View } from './view';
 
-type Built = { kind: 'ok'; program: Program; sim: SimResult } | { kind: 'error'; message: string };
+type Assembled = { kind: 'ok'; program: Program } | { kind: 'error'; message: string };
+type Simulated = { kind: 'ok'; sim: SimResult } | { kind: 'error'; message: string };
 
-function build(source: string, machine: MachineDesc): Built {
+function assembleSource(source: string): Assembled {
   try {
-    const program = assemble(source);
-    const sim = simulate(program, machine, { maxCycles: MAX_UI_CYCLES });
-    return { kind: 'ok', program, sim };
+    return { kind: 'ok', program: assemble(source) };
   } catch (e) {
-    if (e instanceof AssemblerError) return { kind: 'error', message: e.message };
+    return { kind: 'error', message: e instanceof AssemblerError ? e.message : String(e) };
+  }
+}
+
+function simulateProgram(program: Program, machine: MachineDesc): Simulated {
+  try {
+    return { kind: 'ok', sim: simulate(program, machine, { maxCycles: MAX_UI_CYCLES }) };
+  } catch (e) {
     return { kind: 'error', message: String(e) };
   }
 }
@@ -39,7 +45,11 @@ export function App() {
 
   const example = EXAMPLES.find((e) => e.id === exampleId);
   const machine = useMemo(() => buildMachine(choice), [choice]);
-  const built = useMemo(() => build(source, machine), [source, machine]);
+  const assembled = useMemo(() => assembleSource(source), [source]);
+  const simulated = useMemo(
+    () => (mode === 'step' && assembled.kind === 'ok' ? simulateProgram(assembled.program, machine) : null),
+    [mode, assembled, machine],
+  );
 
   const pickExample = (id: string) => {
     const ex = EXAMPLES.find((e) => e.id === id)!;
@@ -101,13 +111,15 @@ export function App() {
         </p>
       )}
 
-      {built.kind === 'error' ? (
-        <pre className="error">{built.message}</pre>
-      ) : mode === 'step' ? (
-        <Stepper key={`${source}|${JSON.stringify(machine)}`} sim={built.sim} program={built.program} />
-      ) : (
-        <Compare program={built.program} a={cmpA} b={cmpB} setA={setCmpA} setB={setCmpB} />
-      )}
+      {assembled.kind === 'error' ? (
+        <pre className="error">{assembled.message}</pre>
+      ) : mode === 'compare' ? (
+        <Compare program={assembled.program} a={cmpA} b={cmpB} setA={setCmpA} setB={setCmpB} />
+      ) : simulated?.kind === 'ok' ? (
+        <Stepper key={`${source}|${JSON.stringify(machine)}`} sim={simulated.sim} program={assembled.program} />
+      ) : simulated ? (
+        <pre className="error">{simulated.message}</pre>
+      ) : null}
     </main>
   );
 }

@@ -1,7 +1,7 @@
 # Branch-bound: the branch on each element's low bit follows an irregular
 # pattern. Try predictor none, not-taken, bimodal and gshare and watch the
 # mispredicts and flushes.
-# Result: a0 = number of odd elements = 9
+# Result: a0 = number of odd elements = 8
     .data
 vals: .word 7, 2, 9, 4, 4, 1, 3, 8, 6, 5, 11, 2, 13, 10, 15, 12
     .text
